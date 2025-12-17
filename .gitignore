@@ -47,3 +47,11 @@ data/
 redis-data/
 es-data/
 ollama-data/
+
+.venv/
+__pycache__/
+*.pyc
+crawled_data.json
+processed_chunks.json
+
+.env

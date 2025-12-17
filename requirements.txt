@@ -22,8 +22,11 @@ ollama
 elasticsearch
 
 # (만약 API 서버로 만든다면)
-# fastapi
-# uvicorn
+fastapi
+uvicorn
+
+# Streamlit UI
+streamlit
 
 # Redis 저장 시 필요한 라이브러리
 redis
