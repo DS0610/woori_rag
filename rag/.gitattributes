@@ -1,0 +1,3 @@
+# Git이 run.sh 파일을 Windows 방식으로 자동 변환하는 것을 막고,
+# 항상 Linux 방식(LF)을 유지하도록 강제합니다.
+app/run.sh text eol=lf

@@ -1,0 +1,5 @@
+.venv/
+__pycache__/
+*.pyc
+crawled_data.json
+processed_chunks.json

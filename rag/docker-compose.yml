@@ -1,0 +1,28 @@
+# 'version' 태그 삭제됨
+
+services:
+  # 1. Elasticsearch 서비스 정의
+  elasticsearch:
+    build: ./elasticsearch
+    container_name: es-rag-container
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - esdata:/usr/share/elasticsearch/data
+
+  # 2. 파이썬 앱 서비스 정의
+  app:
+    build: ./app
+    container_name: ai_agent-app-1 # 컨테이너 이름 명시 (선택 사항)
+    environment:
+      # [추가] index_data.py가 사용할 Elasticsearch 주소
+      - ELASTICSEARCH_HOST=http://elasticsearch:9200
+    depends_on:
+      - elasticsearch # Elasticsearch가 먼저 실행된 후에 app을 실행
+
+volumes:
+  esdata:
