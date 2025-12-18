@@ -38,6 +38,7 @@ CAG Cache 조회 (similarity ≥ 0.85)
 | 문서 검색 | Elasticsearch 8.x |
 | 임베딩 | jhgan/ko-sroberta-multitask |
 | LLM | Ollama + llama3.2:3b |
+| **LLM 프레임워크** | **LangChain (LCEL)** |
 | UI | Streamlit |
 
 ---

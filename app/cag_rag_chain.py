@@ -1,6 +1,6 @@
 # cag_rag_chain.py
 """
-CAG + RAG 통합 체인 모듈
+CAG + RAG 통합 체인 모듈 (LangChain 기반)
 - CAG HIT: 캐시된 답변 즉시 반환
 - CAG MISS: RAG 파이프라인으로 문서 검색 후 답변 생성
 """
@@ -17,12 +17,16 @@ from app.cag import CAGCache
 # Elasticsearch 기반 RAG 컴포넌트
 from elasticsearch import Elasticsearch
 from sentence_transformers import SentenceTransformer
-import requests
+
+# LangChain 컴포넌트
+from langchain_ollama import ChatOllama
+from langchain_core.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate
+from langchain_core.output_parsers import StrOutputParser
 
 
 class CAGRAGChain:
     """
-    CAG → RAG Fallback 체인
+    CAG → RAG Fallback 체인 (LangChain 기반)
     
     워크플로우:
     1. CAG 캐시 조회 (similarity >= threshold 시 HIT)
@@ -38,7 +42,7 @@ class CAGRAGChain:
         es_host: str = "http://localhost:9200",
         es_index: str = "customs-docs-v1",
         embedding_model: str = "jhgan/ko-sroberta-multitask",
-        ollama_url: str = "http://localhost:11434/api/chat",
+        ollama_base_url: str = "http://localhost:11434",
         ollama_model: str = "llama3.2:3b",
         cache_threshold: float = 0.85,
     ):
@@ -55,8 +59,6 @@ class CAGRAGChain:
         self.embedding_model = SentenceTransformer(embedding_model)
         self.es_client = Elasticsearch(es_host, verify_certs=False)
         self.es_index = es_index
-        self.ollama_url = ollama_url
-        self.ollama_model = ollama_model
 
         # Elasticsearch 연결 확인
         if not self.es_client.ping():
@@ -64,9 +66,18 @@ class CAGRAGChain:
         else:
             print("✅ Elasticsearch 연결 성공")
 
+        # LangChain LLM 초기화
+        print("🔧 LangChain LLM 초기화 중...")
+        self.llm = ChatOllama(
+            model=ollama_model,
+            base_url=ollama_base_url,
+            temperature=0,
+            timeout=120,
+        )
+        print("✅ LangChain ChatOllama 연결 성공")
+
         # 시스템 프롬프트
-        self.system_prompt = """
-당신은 관세청의 공식 AI 에이전트 '커스텀-봇'입니다.
+        self.system_prompt = """당신은 관세청의 공식 AI 에이전트 '커스텀-봇'입니다.
 당신의 임무는 오직 제공되는 [관세청 공식 자료]를 근거로 하여 사용자의 질문에 답변하는 것입니다.
 
 [지시 사항]
@@ -82,8 +93,20 @@ class CAGRAGChain:
 - 중요한 내용은 **굵게** 표시하세요.
 - 단계별 설명 시 1. 2. 3. 번호 목록을 사용하세요.
 - 항목 나열 시 - 불릿포인트를 사용하세요.
-- 금액이나 수치는 강조해서 표시하세요.
-"""
+- 금액이나 수치는 강조해서 표시하세요."""
+
+        # LangChain 프롬프트 템플릿 구성
+        self.prompt_template = ChatPromptTemplate.from_messages([
+            SystemMessagePromptTemplate.from_template(self.system_prompt),
+            HumanMessagePromptTemplate.from_template("""[관세청 공식 자료]
+{context}
+---
+[질문]
+{question}""")
+        ])
+
+        # LangChain 체인 구성 (LCEL)
+        self.rag_chain = self.prompt_template | self.llm | StrOutputParser()
 
     def _retrieve_documents(self, query: str, top_k: int = 3) -> str:
         """Elasticsearch에서 관련 문서 검색"""
@@ -116,39 +139,22 @@ class CAGRAGChain:
             return ""
 
     def _generate_answer(self, query: str, context: str) -> str:
-        """Ollama LLM으로 답변 생성"""
-        user_content = f"""
-[관세청 공식 자료]
-{context}
----
-[질문]
-{query}
-"""
-        payload = {
-            "model": self.ollama_model,
-            "messages": [
-                {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": user_content},
-            ],
-            "stream": False,
-        }
-
+        """LangChain LLM으로 답변 생성"""
         try:
-            response = requests.post(
-                self.ollama_url,
-                json=payload,
-                timeout=120,
-                proxies={"http": None, "https": None},
-            )
-            response.raise_for_status()
-            result = response.json()
-            return result.get("message", {}).get("content", "").strip()
-        except requests.exceptions.ConnectionError:
-            return "❌ Ollama 서버에 연결할 수 없습니다. 서버가 실행 중인지 확인하세요."
-        except requests.exceptions.Timeout:
-            return "❌ 응답 시간을 초과했습니다. 잠시 후 다시 시도해주세요."
+            # LangChain LCEL 체인 실행
+            answer = self.rag_chain.invoke({
+                "context": context,
+                "question": query
+            })
+            return answer.strip()
         except Exception as e:
-            return f"❌ 답변 생성 중 오류: {e}"
+            error_msg = str(e)
+            if "Connection" in error_msg:
+                return "❌ Ollama 서버에 연결할 수 없습니다. 서버가 실행 중인지 확인하세요."
+            elif "timeout" in error_msg.lower():
+                return "❌ 응답 시간을 초과했습니다. 잠시 후 다시 시도해주세요."
+            else:
+                return f"❌ 답변 생성 중 오류: {e}"
 
     def invoke(self, inputs: Dict[str, str]) -> Dict[str, any]:
         """
@@ -184,8 +190,8 @@ class CAGRAGChain:
                 "source": "NONE",
             }
 
-        # 3. LLM으로 답변 생성
-        print("🤖 LLM 답변 생성 중...")
+        # 3. LangChain LLM으로 답변 생성
+        print("🤖 LangChain LLM 답변 생성 중...")
         answer = self._generate_answer(question, context)
 
         # 4. Dynamic Cache 저장 (에러 응답은 저장하지 않음)
